@@ -1,10 +1,10 @@
-import sys import subprocess import requests import re import os from datetime import datetime from urllib.parse import urlparse from flask import Flask, request, jsonify
+import sys import subprocess import requests import re import os from datetime import datetime from urllib.parse import urlparse from flask import Flask, request, jsonify import telebot import threading
 
 --- Configuration ---
 
-M3U_URL = "https://raw.githubusercontent.com/alex4528/m3u/main/jstar.m3u" PIXELDRAIN_API_KEY = "60022898-39c5-4a3c-a3c4-bbbccbde20ad" PORT = 5000
+M3U_URL = "https://raw.githubusercontent.com/alex4528/m3u/main/jstar.m3u" PIXELDRAIN_API_KEY = "60022898-39c5-4a3c-a3c4-bbbccbde20ad" BOT_TOKEN = "7386617987:AAGounvetKHtmtqCxEbY_Idc5M2IfUNSst4" PORT = 5000
 
-app = Flask(name)
+app = Flask(name) bot = telebot.TeleBot(BOT_TOKEN)
 
 def fetch_channels_from_m3u(): r = requests.get(M3U_URL) r.raise_for_status() lines = r.text.splitlines()
 
@@ -57,7 +57,7 @@ while i < len(lines):
     i += 1
 return channels
 
-def upload_to_pixeldrain(filepath): print(f"[+] Uploading {filepath} to Pixeldrain...") with open(filepath, 'rb') as f: response = requests.post( "https://pixeldrain.com/api/file", headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"}, files={"file": (os.path.basename(filepath), f)} ) if response.status_code == 200: file_id = response.json().get("id") link = f"https://pixeldrain.com/u/{file_id}" print(f"[\u2713] Uploaded: {link}") return link else: print(f"[!] Upload failed: {response.text}") return None
+def upload_to_pixeldrain(filepath): print(f"[+] Uploading {filepath} to Pixeldrain...") with open(filepath, 'rb') as f: response = requests.post( "https://pixeldrain.com/api/file", headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"}, files={"file": (os.path.basename(filepath), f)} ) if response.status_code == 200: file_id = response.json().get("id") link = f"https://pixeldrain.com/u/{file_id}" print(f"[✓] Uploaded: {link}") return link else: print(f"[!] Upload failed: {response.text}") return None
 
 def run_grab(channel_id, date_str, time_str, duration, output_ext, channels): channel = channels.get(channel_id) if not channel: print(f"[!] Channel ID {channel_id} not found.") return
 
@@ -87,9 +87,9 @@ subprocess.run(cmd)
 if os.path.exists(filename):
     link = upload_to_pixeldrain(filename)
     os.remove(filename)
-    print(f"[\u2713] Deleted local file: {filename}")
+    print(f"[✓] Deleted local file: {filename}")
     if link:
-        print(f"[\ud83d\udd17] Download Link: {link}")
+        print(f"[🔗] Download Link: {link}")
     return link
 else:
     print(f"[!] File not created: {filename}")
@@ -112,7 +112,32 @@ try:
 except Exception as e:
     return jsonify({"error": str(e)}), 500
 
---- CLI Support ---
+--- Telegram Bot ---
 
-if name == "main": if len(sys.argv) == 1: app.run(host="0.0.0.0", port=PORT) elif len(sys.argv) == 6: channels = fetch_channels_from_m3u() channel_id, date_str, time_str, duration_str, output_ext = sys.argv[1:] run_grab(channel_id, date_str, time_str, duration_str, output_ext, channels) else: print("Usage:\n - Web: run with no args\n - CLI: python grab.py <channel_id> <date> <time> <duration_sec> <output_ext>")
+@bot.message_handler(commands=['start']) def welcome(msg): bot.reply_to(msg, "👋 Welcome to the Channel Ripper Bot!\nSend: /grab <id> <date> <time> <duration> <ext>\nExample: /grab 1089 2025-07-08 23:00:00 3600 .mp4", parse_mode='Markdown')
+
+@bot.message_handler(commands=['grab']) def grab_command(msg): try: parts = msg.text.strip().split() if len(parts) != 6: bot.reply_to(msg, "❌ Invalid format!\nUse: /grab <id> <date> <time> <duration> <.ext>", parse_mode='Markdown') return
+
+_, channel_id, date, time_str, duration, ext = parts
+    bot.reply_to(msg, f"⏳ Starting rip for channel `{channel_id}`...", parse_mode='Markdown')
+
+    def process():
+        try:
+            channels = fetch_channels_from_m3u()
+            link = run_grab(channel_id, date, time_str, duration, ext, channels)
+            if link:
+                bot.send_message(msg.chat.id, f"✅ Done!\n🔗 [Download Link]({link})", parse_mode='Markdown')
+            else:
+                bot.send_message(msg.chat.id, "❌ Rip failed or no file uploaded.")
+        except Exception as e:
+            bot.send_message(msg.chat.id, f"❌ Error: {str(e)}")
+
+    threading.Thread(target=process).start()
+
+except Exception as e:
+    bot.reply_to(msg, f"⚠️ Unexpected Error: {e}")
+
+--- CLI or App Runner ---
+
+if name == "main": if len(sys.argv) == 1: threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT)).start() bot.infinity_polling() elif len(sys.argv) == 6: channels = fetch_channels_from_m3u() channel_id, date_str, time_str, duration_str, output_ext = sys.argv[1:] run_grab(channel_id, date_str, time_str, duration_str, output_ext, channels) else: print("Usage:\n - Web: run with no args\n - CLI: python grab.py <channel_id> <date> <time> <duration_sec> <output_ext>")
 
